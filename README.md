@@ -17,7 +17,8 @@ Configure the backend — copy the example and fill it in:
 cp server/.env.example server/.env
 ```
 
-You need `DATABASE_URL` (Neon connection string) and `JWT_SECRET` at minimum.
+You need `DATABASE_URL` (Neon connection string) and `JWT_SECRET`. That is it —
+the default TTS provider needs no key.
 
 Then start both servers:
 
@@ -35,17 +36,34 @@ npm run dev
 
 Set `TTS_PROVIDER` in `server/.env`:
 
-| Value        | Needs                 | Notes |
-|--------------|-----------------------|-------|
-| `mock`       | nothing               | Generates a real playable WAV locally. Use this to test the app without a key or billing. |
-| `google`     | `GOOGLE_TTS_API_KEY`  | Google Cloud Text-to-Speech. Matches the `voices` table, which is seeded with Google voice IDs. |
-| `elevenlabs` | `ELEVENLABS_API_KEY`  | The seeded voice IDs are Google-format, so the `voices` table needs reseeding first. |
+| Value        | Needs                | Notes |
+|--------------|----------------------|-------|
+| `edge`       | nothing              | **Default.** Microsoft Edge neural voices. No API key, no account, no billing. Neural voices for all 15 seeded languages including Hindi, Gujarati, Marathi, Tamil, Telugu and Bengali. |
+| `mock`       | nothing              | Synthesises a tone-based WAV offline. Useful when there is no network at all. |
+| `elevenlabs` | `ELEVENLABS_API_KEY` | Better quality, free tier is 10k characters/month. Requires reseeding `voices` with ElevenLabs voice IDs. |
+| `google`     | `GOOGLE_TTS_API_KEY` | Google Cloud TTS. Requires a billing account even on the free tier. |
 
-To get a Google key: enable [Cloud Text-to-Speech](https://console.cloud.google.com/apis/library/texttospeech.googleapis.com),
-then create an API key under **APIs & Services → Credentials**. Free tier covers
-1M standard characters per month.
+`GET /api/health` reports the active provider and whether it has what it needs.
 
-`GET /api/health` reports which provider is active and whether it has a key.
+### A caveat on `edge`
+
+The Edge provider talks to the same endpoint that Microsoft Edge's Read Aloud
+feature uses. It is not a documented public API, so Microsoft could change it
+without notice. That is a fine trade for a portfolio or college project, but if
+this ever needs a contractual uptime guarantee, switch to `elevenlabs` (free
+tier, no card required) or `google` and reseed the voices table.
+
+### Reseeding voices
+
+The `voices` table holds provider-specific voice IDs, so it must match the
+active provider:
+
+```bash
+cd server && npm run seed:voices
+```
+
+This updates rows in place and disables ones it no longer needs, rather than
+deleting them, so existing `speech_generations` rows keep resolving a voice name.
 
 ## API
 

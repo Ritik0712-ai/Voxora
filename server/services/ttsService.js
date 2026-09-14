@@ -141,6 +141,76 @@ const elevenLabsProvider = {
   },
 };
 
+// ------------------------------------------------------------ Microsoft Edge
+// Uses the same neural voices as Edge's built-in Read Aloud. No API key, no
+// account and no billing, which is why it is the default. It is an unofficial
+// endpoint though, so treat it as best-effort rather than a contractual API.
+
+const edgeProvider = {
+  name: 'edge',
+
+  async textToSpeech(text, providerVoiceId, options = {}) {
+    // Required lazily: the module opens a WebSocket on construction, so there
+    // is no reason to load it when another provider is selected.
+    const { MsEdgeTTS, OUTPUT_FORMAT } = require('msedge-tts');
+
+    const voice = providerVoiceId || 'en-US-AriaNeural';
+    const speed = clamp(Number(options.speed) || 1.0, 0.5, 2.0);
+    const pitchSemitones = clamp(Number(options.pitch) || 0, -20, 20);
+
+    // Edge takes prosody as percentages / Hz offsets rather than multipliers.
+    const ratePercent = Math.round((speed - 1) * 100);
+    const pitchHz = Math.round(pitchSemitones * 5);
+
+    const tts = new MsEdgeTTS();
+
+    try {
+      await tts.setMetadata(voice, OUTPUT_FORMAT.AUDIO_24KHZ_48KBITRATE_MONO_MP3);
+
+      const { audioStream } = tts.toStream(text, {
+        rate: `${ratePercent >= 0 ? '+' : ''}${ratePercent}%`,
+        pitch: `${pitchHz >= 0 ? '+' : ''}${pitchHz}Hz`,
+      });
+
+      const chunks = await collectStream(audioStream, 45000);
+      const audio = Buffer.concat(chunks);
+
+      if (audio.length === 0) {
+        throw new TTSError('Edge TTS returned no audio', 502, 'edge');
+      }
+
+      return { audio, format: 'mp3', provider: 'edge' };
+    } catch (error) {
+      if (error instanceof TTSError) throw error;
+      throw new TTSError(`Edge TTS failed: ${error.message}`, 502, 'edge');
+    } finally {
+      try {
+        tts.close?.();
+      } catch (_) { /* already closed */ }
+    }
+  },
+};
+
+function collectStream(stream, timeoutMs) {
+  return new Promise((resolve, reject) => {
+    const chunks = [];
+    const timer = setTimeout(() => {
+      stream.destroy?.();
+      reject(new Error('timed out waiting for audio'));
+    }, timeoutMs);
+
+    stream.on('data', (chunk) => chunks.push(chunk));
+    stream.on('end', () => {
+      clearTimeout(timer);
+      resolve(chunks);
+    });
+    stream.on('error', (err) => {
+      clearTimeout(timer);
+      reject(err);
+    });
+  });
+}
+
 // ------------------------------------------------------------------------ Mock
 // Synthesises a real, playable WAV so the whole app (player, download,
 // history, favorites) can be exercised without any API key or billing.
@@ -251,12 +321,13 @@ function encodeWav(samples, sampleRate) {
 // -------------------------------------------------------------------- registry
 
 const providers = {
+  edge: edgeProvider,
   google: googleProvider,
   elevenlabs: elevenLabsProvider,
   mock: mockProvider,
 };
 
-const getProviderName = () => (process.env.TTS_PROVIDER || 'google').toLowerCase();
+const getProviderName = () => (process.env.TTS_PROVIDER || 'edge').toLowerCase();
 
 const getProvider = () => {
   const name = getProviderName();
@@ -284,6 +355,8 @@ const generateSpeech = async (text, providerVoiceId, options = {}) => {
 const isConfigured = () => {
   const name = getProviderName();
   if (name === 'mock') return true;
+  // Edge needs no credentials at all.
+  if (name === 'edge') return true;
   if (name === 'google') return Boolean(process.env.GOOGLE_TTS_API_KEY);
   if (name === 'elevenlabs') return Boolean(process.env.ELEVENLABS_API_KEY);
   return false;
