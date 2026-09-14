@@ -3,6 +3,7 @@ const path = require('path');
 const crypto = require('crypto');
 
 const ttsService = require('../services/ttsService');
+const translationService = require('../services/translationService');
 const { pool } = require('../config/database');
 const { ValidationError } = require('../utils/errors');
 
@@ -45,7 +46,7 @@ const resolveLanguage = async (code) => {
 
 const generateSpeech = async (req, res, next) => {
   try {
-    let { text, language, voice, speed = 1.0, pitch = 0 } = req.body || {};
+    let { text, language, voice, speed = 1.0, pitch = 0, translate = true } = req.body || {};
 
     if (typeof text !== 'string' || text.trim().length === 0) {
       throw new ValidationError('Text is required.');
@@ -75,11 +76,28 @@ const generateSpeech = async (req, res, next) => {
       throw new ValidationError('A valid language or voice must be selected.');
     }
 
-    const characterCount = text.length;
-    const wordCount = text.split(/\s+/).filter(Boolean).length;
+    // Speech synthesis reads text aloud, it never rewrites it. So to actually
+    // hear the target language rather than the typed language in a local
+    // accent, the text has to be translated first.
+    const sourceText = text;
+    let spokenText = text;
+    let translation = { translated: false, detectedLanguage: null, skippedReason: null };
+
+    if (translate) {
+      const outcome = await translationService.translate(sourceText, languageRow.code);
+      spokenText = outcome.text;
+      translation = {
+        translated: outcome.translated,
+        detectedLanguage: outcome.detectedLanguage,
+        skippedReason: outcome.skippedReason || null,
+      };
+    }
+
+    const characterCount = spokenText.length;
+    const wordCount = spokenText.split(/\s+/).filter(Boolean).length;
 
     const result = await ttsService.generateSpeech(
-      text,
+      spokenText,
       voiceRow ? voiceRow.provider_voice_id : null,
       {
         languageCode: languageRow.code,
@@ -101,15 +119,19 @@ const generateSpeech = async (req, res, next) => {
       try {
         const insert = await pool.query(
           `INSERT INTO speech_generations
-             (user_id, language_id, voice_id, text_content, character_count,
-              word_count, audio_url, audio_format, status, created_at, completed_at)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'completed', NOW(), NOW())
+             (user_id, language_id, voice_id, text_content, source_text,
+              source_language, was_translated, character_count, word_count,
+              audio_url, audio_format, status, created_at, completed_at)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 'completed', NOW(), NOW())
            RETURNING id`,
           [
             req.user.id,
             languageRow.id,
             voiceRow ? voiceRow.id : null,
-            text,
+            spokenText,
+            sourceText,
+            translation.detectedLanguage,
+            translation.translated,
             characterCount,
             wordCount,
             relativeUrl,
@@ -131,6 +153,11 @@ const generateSpeech = async (req, res, next) => {
       provider: result.provider,
       characterCount,
       wordCount,
+      sourceText,
+      spokenText,
+      translated: translation.translated,
+      detectedLanguage: translation.detectedLanguage,
+      translationNote: translation.skippedReason,
       voice: voiceRow
         ? { id: voiceRow.id, name: voiceRow.name, providerVoiceId: voiceRow.provider_voice_id }
         : null,

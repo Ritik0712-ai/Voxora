@@ -8,6 +8,8 @@ import AudioPlayer from '../components/AudioPlayer'
 import ErrorMessage from '../components/ErrorMessage'
 import LoadingState from '../components/LoadingState'
 import EmptyState from '../components/EmptyState'
+import TranslateToggle from '../components/TranslateToggle'
+import TranslationPreview from '../components/TranslationPreview'
 
 import { ttsService, voicesService, favoritesService, preferencesService } from '../services'
 import { useAuth } from '../hooks/useAuth'
@@ -26,6 +28,8 @@ export default function TTSPage({ showToast, openAuthModal }) {
   const [voicesLoading, setVoicesLoading] = useState(false)
   const [generating, setGenerating] = useState(false)
 
+  const [translate, setTranslate] = useState(true)
+  const [regenerating, setRegenerating] = useState(false)
   const [result, setResult] = useState(null)
   const [error, setError] = useState(null)
   const [favoriting, setFavoriting] = useState(false)
@@ -99,13 +103,37 @@ export default function TTSPage({ showToast, openAuthModal }) {
     setResult(null)
     setGenerating(true)
     try {
-      const data = await ttsService.generateSpeech({ text, language, voice })
+      const data = await ttsService.generateSpeech({ text, language, voice, translate })
       setResult(data)
-      showToast?.('Speech generated successfully', 'success')
+      showToast?.(
+        data.translated ? 'Translated and spoken' : 'Speech generated successfully',
+        'success'
+      )
     } catch (err) {
       setError(err.message || 'Failed to generate speech. Please try again.')
     } finally {
       setGenerating(false)
+    }
+  }
+
+  // Re-synthesise the user's corrected translation verbatim, without
+  // translating it a second time.
+  const handleRegenerate = async (correctedText) => {
+    setError(null)
+    setRegenerating(true)
+    try {
+      const data = await ttsService.generateSpeech({
+        text: correctedText,
+        language,
+        voice,
+        translate: false,
+      })
+      setResult({ ...data, sourceText: result.sourceText, translated: true })
+      showToast?.('Audio regenerated', 'success')
+    } catch (err) {
+      setError(err.message || 'Failed to regenerate audio.')
+    } finally {
+      setRegenerating(false)
     }
   }
 
@@ -135,6 +163,8 @@ export default function TTSPage({ showToast, openAuthModal }) {
     accent: v.accent,
     style: v.style,
   }))
+
+  const selectedLanguage = languages.find((l) => l.code === language)
 
   const canGenerate = text.trim().length > 0 && text.length <= 5000 && Boolean(voice)
 
@@ -175,6 +205,13 @@ export default function TTSPage({ showToast, openAuthModal }) {
           />
         </div>
 
+        <TranslateToggle
+          checked={translate}
+          onChange={setTranslate}
+          languageName={selectedLanguage?.name}
+          disabled={!language}
+        />
+
         <GenerateButton
           onClick={handleGenerate}
           disabled={!canGenerate}
@@ -199,6 +236,18 @@ export default function TTSPage({ showToast, openAuthModal }) {
                 </button>
               )}
             </div>
+            <div className="mb-4">
+              <TranslationPreview
+                sourceText={result.sourceText}
+                spokenText={result.spokenText}
+                translated={result.translated}
+                note={result.translationNote}
+                languageName={selectedLanguage?.name}
+                onRegenerate={handleRegenerate}
+                regenerating={regenerating}
+              />
+            </div>
+
             <AudioPlayer audioUrl={result.audioUrl} format={result.format} />
             <p className="mt-3 text-xs text-gray-400">
               {result.characterCount} characters · {result.wordCount} words · via {result.provider}

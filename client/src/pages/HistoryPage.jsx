@@ -135,12 +135,20 @@ export default function HistoryPage({ showToast, openAuthModal }) {
             >
               <div className="flex items-start justify-between gap-4">
                 <div className="flex-1 min-w-0">
+                  {item.wasTranslated && item.sourceText && (
+                    <p className="text-gray-400 text-xs mb-1 whitespace-pre-wrap">
+                      {truncate(item.sourceText, 80)}
+                    </p>
+                  )}
                   <p className="text-gray-900 text-sm mb-2 whitespace-pre-wrap">
                     {truncate(item.textContent)}
                   </p>
                   <div className="flex flex-wrap items-center gap-3 text-xs text-gray-500">
                     {item.languageCode && (
                       <span className="px-2 py-1 bg-gray-100 rounded">{item.languageCode}</span>
+                    )}
+                    {item.wasTranslated && (
+                      <span className="px-2 py-1 bg-indigo-50 text-indigo-700 rounded">translated</span>
                     )}
                     <span>{item.voiceName || 'Default voice'}</span>
                     <span>{item.characterCount} chars</span>

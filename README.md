@@ -82,6 +82,40 @@ cd server && npm run seed:voices
 This updates rows in place and disables ones it no longer needs, rather than
 deleting them, so existing `speech_generations` rows keep resolving a voice name.
 
+## Translation
+
+Text-to-speech only reads text aloud, it never rewrites it. Selecting a Bengali
+voice for English text gives you English in a Bengali accent, not Bengali. So
+speech generation runs an optional translation step first.
+
+The UI exposes this as a "Translate into <language>" toggle, on by default:
+
+- **On** — the text is translated into the selected language, then spoken. The
+  translated text is shown next to the player and can be edited and re-spoken.
+- **Off** — the text is read exactly as written, in the selected voice's accent.
+  This is what you want when the text is already in the target language.
+
+Text already in the target language is detected and passed through untouched
+rather than round-tripped.
+
+Translation uses Google's public translate endpoint. Like the Edge TTS
+provider, it needs no key and no billing, and carries the same caveat: it is
+undocumented and could change. Two endpoints are tried with backoff, and a
+failure surfaces a message telling the user to turn translation off rather than
+silently speaking the wrong language.
+
+`POST /tts` takes `translate` (default `true`) and returns `sourceText`,
+`spokenText`, `translated` and `detectedLanguage`. Both texts are stored on
+`speech_generations`, so History shows what was typed and what was spoken.
+
+## Migrations
+
+```bash
+cd server && node migrations/001_add_translation_columns.js
+```
+
+Migrations are idempotent (`ADD COLUMN IF NOT EXISTS`), so re-running is safe.
+
 ## API
 
 All routes are prefixed `/api`. Authenticated routes need `Authorization: Bearer <token>`.
