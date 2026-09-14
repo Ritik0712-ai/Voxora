@@ -98,11 +98,22 @@ The UI exposes this as a "Translate into <language>" toggle, on by default:
 Text already in the target language is detected and passed through untouched
 rather than round-tripped.
 
-Translation uses Google's public translate endpoint. Like the Edge TTS
-provider, it needs no key and no billing, and carries the same caveat: it is
-undocumented and could change. Two endpoints are tried with backoff, and a
-failure surfaces a message telling the user to turn translation off rather than
-silently speaking the wrong language.
+Translation runs **in the browser**, not on the server. The endpoints it uses
+rate-limit and then block by IP, and a deployed server has a single shared
+address, so it gets blocked quickly — the live API saw HTTP 429 and then 403
+while speech synthesis kept working. Each visitor's browser has its own
+address, so the load spreads out and no single address gets hot. The endpoints
+send `Access-Control-Allow-Origin: *`, which makes this possible.
+
+The browser sends the translated text plus the original, and the server records
+both. If every browser-side endpoint fails, the client falls back to asking the
+server to translate, which still works from unblocked addresses. Server-side
+results are cached in Postgres.
+
+It needs no key and no billing, and carries the same caveat as the Edge TTS
+provider: undocumented, and it could change. A failure surfaces a message
+telling the user to turn translation off rather than silently speaking the
+wrong language.
 
 `POST /tts` takes `translate` (default `true`) and returns `sourceText`,
 `spokenText`, `translated` and `detectedLanguage`. Both texts are stored on

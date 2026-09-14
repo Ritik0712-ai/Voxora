@@ -1,5 +1,6 @@
 export { authService } from './authService'
 export { ttsService } from './ttsService'
+export { translationService, translateInBrowser } from './translationService'
 export { voicesService } from './voicesService'
 export { favoritesService } from './favoritesService'
 export { preferencesService } from './preferencesService'

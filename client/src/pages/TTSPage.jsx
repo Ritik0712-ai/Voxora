@@ -11,7 +11,13 @@ import EmptyState from '../components/EmptyState'
 import TranslateToggle from '../components/TranslateToggle'
 import TranslationPreview from '../components/TranslationPreview'
 
-import { ttsService, voicesService, favoritesService, preferencesService } from '../services'
+import {
+  ttsService,
+  voicesService,
+  favoritesService,
+  preferencesService,
+  translateInBrowser,
+} from '../services'
 import { useAuth } from '../hooks/useAuth'
 
 export default function TTSPage({ showToast, openAuthModal }) {
@@ -102,7 +108,30 @@ export default function TTSPage({ showToast, openAuthModal }) {
     setError(null)
     setResult(null)
     setGenerating(true)
+
     try {
+      // Translate in the browser first. These endpoints block by IP, and the
+      // server has one shared address that gets blocked quickly, whereas each
+      // visitor has their own. Fall back to the server if the browser cannot.
+      if (translate) {
+        try {
+          const t = await translateInBrowser(text, language)
+          const data = await ttsService.generateSpeech({
+            text: t.text,
+            language,
+            voice,
+            translate: false,
+            sourceText: text,
+            detectedLanguage: t.detectedLanguage,
+          })
+          setResult(data)
+          showToast?.(data.translated ? 'Translated and spoken' : 'Speech generated', 'success')
+          return
+        } catch {
+          // Browser translation unavailable; let the server try.
+        }
+      }
+
       const data = await ttsService.generateSpeech({ text, language, voice, translate })
       setResult(data)
       showToast?.(

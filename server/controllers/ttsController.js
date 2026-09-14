@@ -39,7 +39,19 @@ const resolveLanguage = async (code) => {
 
 const generateSpeech = async (req, res, next) => {
   try {
-    let { text, language, voice, speed = 1.0, pitch = 0, translate = true } = req.body || {};
+    let {
+      text,
+      language,
+      voice,
+      speed = 1.0,
+      pitch = 0,
+      translate = true,
+      // When the browser already translated (it uses the visitor's own IP,
+      // which is not rate-limited the way a shared server address is), it sends
+      // the original text here so History still records both sides.
+      sourceText: clientSourceText = null,
+      detectedLanguage: clientDetectedLanguage = null,
+    } = req.body || {};
 
     if (typeof text !== 'string' || text.trim().length === 0) {
       throw new ValidationError('Text is required.');
@@ -72,9 +84,20 @@ const generateSpeech = async (req, res, next) => {
     // Speech synthesis reads text aloud, it never rewrites it. So to actually
     // hear the target language rather than the typed language in a local
     // accent, the text has to be translated first.
-    const sourceText = text;
+    let sourceText = text;
     let spokenText = text;
     let translation = { translated: false, detectedLanguage: null, skippedReason: null };
+
+    // Translation already done by the browser.
+    if (!translate && typeof clientSourceText === 'string' && clientSourceText.trim()) {
+      const trimmed = clientSourceText.trim().slice(0, MAX_TEXT_LENGTH);
+      sourceText = trimmed;
+      translation = {
+        translated: trimmed !== text,
+        detectedLanguage: clientDetectedLanguage,
+        skippedReason: null,
+      };
+    }
 
     if (translate) {
       const outcome = await translationService.translate(sourceText, languageRow.code);
