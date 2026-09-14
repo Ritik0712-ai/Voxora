@@ -1,8 +1,15 @@
 import axios from 'axios'
 
-// In dev, Vite proxies /api -> http://localhost:5000 (see vite.config.js),
-// so a relative base works locally and in production behind the same origin.
-const API_BASE_URL = import.meta.env.VITE_API_URL || '/api'
+// Vite inlines env vars at BUILD time, not runtime, so a missing VITE_API_URL
+// silently ships a bundle that calls localhost. The API origin is not a secret,
+// so fall back to the deployed API in production builds rather than failing in
+// a way that only shows up in the browser console.
+const PRODUCTION_API_URL = 'https://voxora-api-y050.onrender.com/api'
+
+// Dev proxies /api -> localhost:5000 (see vite.config.js).
+const API_BASE_URL =
+  import.meta.env.VITE_API_URL ||
+  (import.meta.env.PROD ? PRODUCTION_API_URL : '/api')
 
 const api = axios.create({
   baseURL: API_BASE_URL,

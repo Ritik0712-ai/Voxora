@@ -81,9 +81,12 @@ One environment variable:
 VITE_API_URL   https://<your-api>.onrender.com/api
 ```
 
-**Vite inlines this at build time, not runtime.** Set it before deploying. If
-you add it afterwards you must redeploy, or the built bundle keeps calling
-`localhost:5000`. Include the `/api` suffix, no trailing slash.
+**Vite inlines this at build time, not runtime.** If you add it after a build
+you must redeploy. Include the `/api` suffix, no trailing slash.
+
+It is optional in practice: production builds fall back to the deployed API URL
+in `src/api.js`, so a forgotten variable cannot ship a bundle that calls
+localhost. Set it explicitly to point a build at a different API.
 
 Then set `FRONTEND_URL` on Render to the Vercel URL and let it redeploy.
 
