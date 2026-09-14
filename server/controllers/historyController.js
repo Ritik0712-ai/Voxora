@@ -2,13 +2,12 @@ const historyService = require('../services/historyService');
 
 const getHistory = async (req, res, next) => {
   try {
-    const page = parseInt(req.query.page, 10) || 1;
-    const limit = parseInt(req.query.limit, 10) || 20;
-    const result = await historyService.getUserHistory(req.user.id, page, limit);
-    res.status(200).json({
-      status: 'success',
-      ...result,
-    });
+    const result = await historyService.getUserHistory(
+      req.user.id,
+      req.query.page,
+      req.query.limit
+    );
+    res.status(200).json({ status: 'success', ...result });
   } catch (err) {
     next(err);
   }
@@ -16,8 +15,8 @@ const getHistory = async (req, res, next) => {
 
 const getHistoryById = async (req, res, next) => {
   try {
-    const history = await historyService.getHistoryById(req.params.id, req.user.id);
-    res.status(200).json({ status: 'success', history });
+    const generation = await historyService.getHistoryById(req.params.id, req.user.id);
+    res.status(200).json({ status: 'success', generation });
   } catch (err) {
     next(err);
   }
@@ -26,7 +25,8 @@ const getHistoryById = async (req, res, next) => {
 const deleteHistory = async (req, res, next) => {
   try {
     await historyService.deleteHistory(req.params.id, req.user.id);
-    res.status(204).json({ status: 'success', message: 'History deleted' });
+    // 204 must not carry a body, so use 200 to keep the JSON contract uniform.
+    res.status(200).json({ status: 'success', message: 'Generation deleted' });
   } catch (err) {
     next(err);
   }

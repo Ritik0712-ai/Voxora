@@ -1,91 +1,144 @@
-const { validationResult } = require('express-validator');
+const fs = require('fs');
+const path = require('path');
+const crypto = require('crypto');
+
 const ttsService = require('../services/ttsService');
-const { TTSError } = require('../utils/errors');
 const { pool } = require('../config/database');
+const { ValidationError } = require('../utils/errors');
 
-// Text limits
 const MAX_TEXT_LENGTH = 5000;
-const MIN_TEXT_LENGTH = 1;
+const AUDIO_DIR = path.join(__dirname, '..', 'audio');
 
-// Generate speech
-exports.generateSpeech = async (req, res, next) => {
+// Make sure the audio directory exists at boot.
+fs.mkdirSync(AUDIO_DIR, { recursive: true });
+
+/**
+ * Resolve the client's voice selection to a DB row.
+ * Accepts either the voices.id UUID or the provider_voice_id string,
+ * so the endpoint stays usable from curl as well as the UI.
+ */
+const resolveVoice = async (voice) => {
+  if (!voice) return null;
+
+  const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(voice);
+
+  const result = await pool.query(
+    `SELECT v.id, v.provider_voice_id, v.name, v.language_id, l.code AS language_code
+     FROM voices v
+     JOIN languages l ON v.language_id = l.id
+     WHERE v.enabled = true AND ${isUuid ? 'v.id = $1' : 'v.provider_voice_id = $1'}
+     LIMIT 1`,
+    [voice]
+  );
+
+  return result.rows[0] || null;
+};
+
+const resolveLanguage = async (code) => {
+  if (!code) return null;
+  const result = await pool.query(
+    'SELECT id, code FROM languages WHERE code = $1 AND enabled = true LIMIT 1',
+    [code]
+  );
+  return result.rows[0] || null;
+};
+
+const generateSpeech = async (req, res, next) => {
   try {
-    const errors = validationResult(req);
-    if (!errors.isEmpty()) {
-      return res.status(400).json({ error: errors.array()[0].msg });
+    let { text, language, voice, speed = 1.0, pitch = 0 } = req.body || {};
+
+    if (typeof text !== 'string' || text.trim().length === 0) {
+      throw new ValidationError('Text is required.');
     }
 
-    let { text, language, voice, speed = 1.0, pitch = 0 } = req.body;
-
-    // Normalize text
     text = text.trim();
-    language = language?.trim();
-    voice = voice?.trim();
-
-    // Validate text length
-    if (text.length < MIN_TEXT_LENGTH) {
-      return res.status(400).json({ error: 'Text cannot be empty.' });
-    }
+    language = typeof language === 'string' ? language.trim() : null;
+    voice = typeof voice === 'string' ? voice.trim() : null;
 
     if (text.length > MAX_TEXT_LENGTH) {
-      return res.status(400).json({
-        error: `Text exceeds maximum length of ${MAX_TEXT_LENGTH} characters.`
-      });
+      throw new ValidationError(
+        `Text exceeds the maximum length of ${MAX_TEXT_LENGTH} characters.`
+      );
     }
 
-    // Validate speed
-    if (speed < 0.5 || speed > 2.0) {
-      speed = 1.0;
+    const voiceRow = await resolveVoice(voice);
+    if (voice && !voiceRow) {
+      throw new ValidationError('The selected voice is not available.');
     }
 
-    // Validate pitch
-    if (pitch < -20 || pitch > 20) {
-      pitch = 0;
+    // Language comes from the voice when we have one; otherwise from the request.
+    const languageRow = voiceRow
+      ? { id: voiceRow.language_id, code: voiceRow.language_code }
+      : await resolveLanguage(language);
+
+    if (!languageRow) {
+      throw new ValidationError('A valid language or voice must be selected.');
     }
 
-    // Generate speech
-    const audioBuffer = await ttsService.generateSpeech(text, voice, {
-      language,
-      speed,
-      pitch
-    });
+    const characterCount = text.length;
+    const wordCount = text.split(/\s+/).filter(Boolean).length;
 
-    // Save to history if user is authenticated
+    const result = await ttsService.generateSpeech(
+      text,
+      voiceRow ? voiceRow.provider_voice_id : null,
+      {
+        languageCode: languageRow.code,
+        speed: Number(speed),
+        pitch: Number(pitch),
+      }
+    );
+
+    // Persist the audio so it can be replayed from History and downloaded.
+    const filename = `${crypto.randomUUID()}.${result.format}`;
+    await fs.promises.writeFile(path.join(AUDIO_DIR, filename), result.audio);
+
+    const relativeUrl = `/audio/${filename}`;
+    const absoluteUrl = `${req.protocol}://${req.get('host')}${relativeUrl}`;
+
     let generationId = null;
+
     if (req.user) {
       try {
-        const result = await pool.query(
+        const insert = await pool.query(
           `INSERT INTO speech_generations
-           (user_id, text_content, character_count, word_count, voice_name,
-            language_code, audio_format, status, completed_at)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, 'completed', NOW())
+             (user_id, language_id, voice_id, text_content, character_count,
+              word_count, audio_url, audio_format, status, created_at, completed_at)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'completed', NOW(), NOW())
            RETURNING id`,
           [
             req.user.id,
-            text.substring(0, 500), // Store preview
-            text.length,
-            text.split(/\s+/).filter(w => w.length > 0).length,
-            voice,
-            language,
-            'mp3'
+            languageRow.id,
+            voiceRow ? voiceRow.id : null,
+            text,
+            characterCount,
+            wordCount,
+            relativeUrl,
+            result.format,
           ]
         );
-        generationId = result.rows[0].id;
+        generationId = insert.rows[0].id;
       } catch (dbError) {
-        console.error('Failed to save to history:', dbError);
+        // A history write failing must not cost the user their audio.
+        console.error('Failed to save generation to history:', dbError.message);
       }
     }
 
-    // Send audio as response
-    res.set({
-      'Content-Type': 'audio/mpeg',
-      'Content-Disposition': 'inline; filename="speech.mp3"',
-      'Content-Length': audioBuffer.length,
-      'X-Generation-Id': generationId || ''
+    res.status(200).json({
+      status: 'success',
+      generationId,
+      audioUrl: absoluteUrl,
+      format: result.format,
+      provider: result.provider,
+      characterCount,
+      wordCount,
+      voice: voiceRow
+        ? { id: voiceRow.id, name: voiceRow.name, providerVoiceId: voiceRow.provider_voice_id }
+        : null,
+      language: { id: languageRow.id, code: languageRow.code },
     });
-    res.send(audioBuffer);
-
   } catch (error) {
     next(error);
   }
 };
+
+module.exports = { generateSpeech };

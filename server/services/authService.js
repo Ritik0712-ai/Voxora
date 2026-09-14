@@ -4,7 +4,11 @@ const { pool } = require('../config/database');
 const { AuthenticationError, AppError } = require('../utils/errors');
 
 const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || '7d';
-const JWT_SECRET = process.env.JWT_SECRET || 'voxora_jwt_secret_2024_secure_token';
+const JWT_SECRET = process.env.JWT_SECRET;
+
+if (!JWT_SECRET) {
+  throw new Error('JWT_SECRET is not set. Add it to server/.env before starting the server.');
+}
 
 const hashPassword = async (password) => {
   const salt = await bcrypt.genSalt(12);
@@ -24,7 +28,6 @@ const generateToken = (user) => {
 };
 
 const register = async (name, email, password) => {
-  try {
     const existingUser = await pool.query(
       'SELECT id FROM users WHERE email = $1',
       [email]
@@ -55,9 +58,6 @@ const register = async (name, email, password) => {
       },
       token
     };
-  } catch (error) {
-    throw error;
-  }
 };
 
 const login = async (email, password) => {

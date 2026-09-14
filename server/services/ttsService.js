@@ -1,191 +1,292 @@
 const axios = require('axios');
-const FormData = require('form-data');
 const { TTSError } = require('../utils/errors');
 
-let elevenLabsService;
-let googleCloudService;
+/**
+ * Providers all expose the same shape:
+ *   textToSpeech(text, providerVoiceId, { languageCode, speed, pitch })
+ *     -> { audio: Buffer, format: 'mp3', provider: string }
+ */
 
-const getElevenLabsService = () => {
-  if (!elevenLabsService) {
-    const apiKey = process.env.ELEVENLABS_API_KEY;
-    if (!apiKey) {
-      throw new TTSError('ElevenLabs API key not configured', 500, 'elevenlabs');
-    }
-    elevenLabsService = {
-      apiKey,
-      voiceId: process.env.ELEVENLABS_VOICE_ID || 'EXAVITQu4vr4xnSDxMaL',
-      baseUrl: 'https://api.elevenlabs.io/v1',
-      async textToSpeech(text, voiceId, options = {}) {
-        const speed = options.speed || 1.0;
-        const pitch = options.pitch || 0;
+// ---------------------------------------------------------------- Google Cloud
 
-        const formData = new FormData();
-        formData.append('text', text);
-        formData.append('model_id', 'eleven_monolingual_v1');
-        formData.append('voice_settings', JSON.stringify({
-          stability: 0.5,
-          similarity_boost: 0.75,
-          style: 0.0,
-          use_speaker_boost: true
-        }));
+const googleProvider = {
+  name: 'google',
+  baseUrl: 'https://texttospeech.googleapis.com/v1',
 
-        try {
-          const response = await axios.post(
-            `${this.baseUrl}/text-to-speech/${voiceId || this.voiceId}`,
-            formData,
-            {
-              headers: {
-                ...formData.getHeaders(),
-                'xi-api-key': this.apiKey
-              },
-              responseType: 'arraybuffer',
-              timeout: 30000
-            }
-          );
-
-          return {
-            audio: Buffer.from(response.data),
-            format: 'mp3',
-            provider: 'elevenlabs'
-          };
-        } catch (error) {
-          if (error.response) {
-            throw new TTSError(
-              `ElevenLabs API error: ${error.response.status}`,
-              502,
-              'elevenlabs'
-            );
-          }
-          throw new TTSError('Failed to connect to ElevenLabs', 503, 'elevenlabs');
-        }
-      }
-    };
-  }
-  return elevenLabsService;
-};
-
-const getGoogleCloudService = () => {
-  if (!googleCloudService) {
+  async textToSpeech(text, providerVoiceId, options = {}) {
     const apiKey = process.env.GOOGLE_TTS_API_KEY;
     if (!apiKey) {
-      throw new TTSError('Google Cloud TTS API key not configured', 500, 'google');
+      throw new TTSError(
+        'Google Cloud TTS API key is not configured. Set GOOGLE_TTS_API_KEY in server/.env, or set TTS_PROVIDER=mock to test without a key.',
+        500,
+        'google'
+      );
     }
-    googleCloudService = {
-      apiKey,
-      baseUrl: 'https://texttospeech.googleapis.com/v1',
-      async textToSpeech(text, voiceName, options = {}) {
-        const languageCode = options.languageCode || 'en-US';
-        const voiceNameParam = voiceName || `en-US-Standard-A`;
-        const speakingRate = options.speed || 1.0;
-        const pitch = options.pitch || 0.0;
 
-        const requestBody = {
-          input: { text },
-          voice: {
-            languageCode,
-            name: voiceNameParam
-          },
-          audioConfig: {
-            audioEncoding: 'MP3',
-            speakingRate,
-            pitch,
-            sampleRateHertz: 24000
-          }
-        };
+    const languageCode = options.languageCode || 'en-US';
+    const voiceName = providerVoiceId || `${languageCode}-Standard-A`;
 
-        try {
-          const response = await axios.post(
-            `${this.baseUrl}/text:synthesize?key=${this.apiKey}`,
-            requestBody,
-            { timeout: 30000 }
-          );
+    // Google accepts speakingRate 0.25-4.0 and pitch -20.0 to 20.0 semitones.
+    const speakingRate = clamp(Number(options.speed) || 1.0, 0.25, 4.0);
+    const pitch = clamp(Number(options.pitch) || 0, -20, 20);
 
-          const audioContent = response.data.audioContent;
-          return {
-            audio: Buffer.from(audioContent, 'base64'),
-            format: 'mp3',
-            provider: 'google'
-          };
-        } catch (error) {
-          if (error.response) {
-            throw new TTSError(
-              `Google TTS API error: ${error.response.status}`,
-              502,
-              'google'
-            );
-          }
-          throw new TTSError('Failed to connect to Google TTS', 503, 'google');
-        }
-      }
+    const body = {
+      input: { text },
+      voice: { languageCode, name: voiceName },
+      audioConfig: {
+        audioEncoding: 'MP3',
+        speakingRate,
+        pitch,
+      },
     };
-  }
-  return googleCloudService;
-};
-
-const getDefaultVoices = () => {
-  return [
-    { voiceId: 'EXAVITQu4vr4xnSDxMaL', name: 'Bella', languageCode: 'en-US', gender: 'Female', provider: 'elevenlabs' },
-    { voiceId: 'VR6AewLTigWG42SOxpC6', name: 'Arnold', languageCode: 'en-US', gender: 'Male', provider: 'elevenlabs' },
-    { voiceId: 'pFZP5JQG7iQjIQuC4Bku', name: 'Amy', languageCode: 'en-GB', gender: 'Female', provider: 'elevenlabs' },
-    { voiceId: 'TX3LPaxmHKxFm7W3adK3', name: 'James', languageCode: 'en-GB', gender: 'Male', provider: 'elevenlabs' },
-    { voiceId: 'zcAHiN0kIQqzqEsYGg0e', name: 'Sofia', languageCode: 'es-ES', gender: 'Female', provider: 'elevenlabs' },
-    { voiceId: 'g5CIjZEefAph4nytpuKM', name: 'Carlos', languageCode: 'es-ES', gender: 'Male', provider: 'elevenlabs' },
-    { voiceId: 'FstqCyFb0w0pGGw3LKvb', name: 'Claire', languageCode: 'fr-FR', gender: 'Female', provider: 'elevenlabs' },
-    { voiceId: 'IKneP0Bq0R4Iaipk0pNi', name: 'Antoine', languageCode: 'fr-FR', gender: 'Male', provider: 'elevenlabs' },
-    { voiceId: 'XpR9eJgkjfGHGcJLJ3PN', name: 'Hannah', languageCode: 'de-DE', gender: 'Female', provider: 'elevenlabs' },
-    { voiceId: 'dfsfSD8gKSLwIDCcB8Y0', name: 'Klaus', languageCode: 'de-DE', gender: 'Male', provider: 'elevenlabs' },
-    { voiceId: 'zcwH1nyHQQyp8SYjQeYp', name: 'Aditi', languageCode: 'hi-IN', gender: 'Female', provider: 'elevenlabs' },
-    { voiceId: 'gVkHGD8KBAJwfcJHmwPw', name: 'Amit', languageCode: 'hi-IN', gender: 'Male', provider: 'elevenlabs' }
-  ];
-};
-
-const generateSpeech = async (text, voiceId, options = {}) => {
-  const provider = process.env.TTS_PROVIDER || 'elevenlabs';
-
-  if (provider === 'elevenlabs') {
-    const service = getElevenLabsService();
-    return service.textToSpeech(text, voiceId, options);
-  } else if (provider === 'google') {
-    const service = getGoogleCloudService();
-    return service.textToSpeech(text, voiceId, options);
-  } else {
-    throw new TTSError(`Unknown TTS provider: ${provider}`, 500, provider);
-  }
-};
-
-const getAvailableVoices = async () => {
-  const provider = process.env.TTS_PROVIDER || 'elevenlabs';
-
-  if (provider === 'elevenlabs') {
-    const apiKey = process.env.ELEVENLABS_API_KEY;
-    if (!apiKey) {
-      return getDefaultVoices();
-    }
 
     try {
-      const response = await axios.get('https://api.elevenlabs.io/v1/voices', {
-        headers: { 'xi-api-key': apiKey },
-        timeout: 10000
-      });
+      const response = await axios.post(
+        `${this.baseUrl}/text:synthesize?key=${apiKey}`,
+        body,
+        { timeout: 30000 }
+      );
 
-      const voices = response.data.voices.map(voice => ({
-        voiceId: voice.voice_id,
-        name: voice.name,
-        languageCode: voice.labels?.language || 'en',
-        gender: voice.labels?.gender || 'Unknown',
-        accent: voice.labels?.accent || null,
-        style: voice.labels?.style || null,
-        provider: 'elevenlabs'
-      }));
+      if (!response.data || !response.data.audioContent) {
+        throw new TTSError('Google TTS returned an empty response', 502, 'google');
+      }
 
-      return voices;
+      return {
+        audio: Buffer.from(response.data.audioContent, 'base64'),
+        format: 'mp3',
+        provider: 'google',
+      };
     } catch (error) {
-      console.warn('Failed to fetch ElevenLabs voices, using defaults:', error.message);
-      return getDefaultVoices();
+      if (error instanceof TTSError) throw error;
+      if (error.response) {
+        const detail =
+          error.response.data?.error?.message ||
+          `HTTP ${error.response.status}`;
+        throw new TTSError(`Google TTS error: ${detail}`, 502, 'google');
+      }
+      throw new TTSError(
+        `Failed to reach Google TTS: ${error.message}`,
+        503,
+        'google'
+      );
     }
-  } else {
-    return getDefaultVoices();
-  }
+  },
 };
 
-module.exports = { generateSpeech, getAvailableVoices };
+// ------------------------------------------------------------------ ElevenLabs
+
+const elevenLabsProvider = {
+  name: 'elevenlabs',
+  baseUrl: 'https://api.elevenlabs.io/v1',
+  defaultVoice: 'EXAVITQu4vr4xnSDxMaL',
+
+  async textToSpeech(text, providerVoiceId, options = {}) {
+    const apiKey = process.env.ELEVENLABS_API_KEY;
+    if (!apiKey) {
+      throw new TTSError(
+        'ElevenLabs API key is not configured. Set ELEVENLABS_API_KEY in server/.env.',
+        500,
+        'elevenlabs'
+      );
+    }
+
+    const voiceId = providerVoiceId || process.env.ELEVENLABS_VOICE_ID || this.defaultVoice;
+
+    // ElevenLabs expects a JSON body, not multipart/form-data.
+    const body = {
+      text,
+      model_id: process.env.ELEVENLABS_MODEL_ID || 'eleven_multilingual_v2',
+      voice_settings: {
+        stability: 0.5,
+        similarity_boost: 0.75,
+        style: 0.0,
+        use_speaker_boost: true,
+      },
+    };
+
+    try {
+      const response = await axios.post(
+        `${this.baseUrl}/text-to-speech/${voiceId}`,
+        body,
+        {
+          headers: {
+            'xi-api-key': apiKey,
+            'Content-Type': 'application/json',
+            Accept: 'audio/mpeg',
+          },
+          responseType: 'arraybuffer',
+          timeout: 30000,
+        }
+      );
+
+      return {
+        audio: Buffer.from(response.data),
+        format: 'mp3',
+        provider: 'elevenlabs',
+      };
+    } catch (error) {
+      if (error.response) {
+        let detail = `HTTP ${error.response.status}`;
+        try {
+          detail = JSON.parse(Buffer.from(error.response.data).toString())?.detail?.message || detail;
+        } catch (_) { /* body was not JSON */ }
+        throw new TTSError(`ElevenLabs error: ${detail}`, 502, 'elevenlabs');
+      }
+      throw new TTSError(
+        `Failed to reach ElevenLabs: ${error.message}`,
+        503,
+        'elevenlabs'
+      );
+    }
+  },
+};
+
+// ------------------------------------------------------------------------ Mock
+// Synthesises a real, playable WAV so the whole app (player, download,
+// history, favorites) can be exercised without any API key or billing.
+// Each character maps to a tone, so different text produces different audio.
+
+const mockProvider = {
+  name: 'mock',
+
+  async textToSpeech(text, providerVoiceId, options = {}) {
+    const sampleRate = 22050;
+    const speed = clamp(Number(options.speed) || 1.0, 0.5, 2.0);
+    const pitchSemitones = clamp(Number(options.pitch) || 0, -20, 20);
+    const pitchFactor = Math.pow(2, pitchSemitones / 12);
+
+    // Roughly imitate speech pacing: ~12 characters per second.
+    const words = text.trim().split(/\s+/).filter(Boolean);
+    const perSyllable = 0.16 / speed;
+
+    const samples = [];
+    // A low-ish base frequency varied per voice so voices sound distinct.
+    const voiceSeed = hashString(providerVoiceId || 'default');
+    const baseFreq = (130 + (voiceSeed % 90)) * pitchFactor;
+
+    for (const word of words) {
+      const syllables = Math.max(1, Math.round(word.length / 3));
+      for (let s = 0; s < syllables; s++) {
+        const charCode = word.charCodeAt(s % word.length);
+        const freq = baseFreq * (1 + ((charCode % 7) - 3) * 0.06);
+        appendTone(samples, freq, perSyllable, sampleRate);
+      }
+      // Short gap between words.
+      appendSilence(samples, 0.05 / speed, sampleRate);
+    }
+
+    if (samples.length === 0) {
+      appendTone(samples, baseFreq, 0.3, sampleRate);
+    }
+
+    return {
+      audio: encodeWav(samples, sampleRate),
+      format: 'wav',
+      provider: 'mock',
+    };
+  },
+};
+
+// ------------------------------------------------------------------- utilities
+
+function clamp(value, min, max) {
+  if (Number.isNaN(value)) return min;
+  return Math.min(max, Math.max(min, value));
+}
+
+function hashString(str) {
+  let h = 0;
+  for (let i = 0; i < str.length; i++) {
+    h = (h * 31 + str.charCodeAt(i)) | 0;
+  }
+  return Math.abs(h);
+}
+
+function appendTone(samples, freq, seconds, sampleRate) {
+  const count = Math.floor(seconds * sampleRate);
+  for (let i = 0; i < count; i++) {
+    const t = i / sampleRate;
+    // Fade in/out so syllables don't click.
+    const envelope = Math.sin((Math.PI * i) / count);
+    // Two harmonics give it a slightly voice-like timbre.
+    const value =
+      Math.sin(2 * Math.PI * freq * t) * 0.6 +
+      Math.sin(4 * Math.PI * freq * t) * 0.25;
+    samples.push(value * envelope * 0.4);
+  }
+}
+
+function appendSilence(samples, seconds, sampleRate) {
+  const count = Math.floor(seconds * sampleRate);
+  for (let i = 0; i < count; i++) samples.push(0);
+}
+
+function encodeWav(samples, sampleRate) {
+  const bytesPerSample = 2;
+  const dataSize = samples.length * bytesPerSample;
+  const buffer = Buffer.alloc(44 + dataSize);
+
+  buffer.write('RIFF', 0);
+  buffer.writeUInt32LE(36 + dataSize, 4);
+  buffer.write('WAVE', 8);
+  buffer.write('fmt ', 12);
+  buffer.writeUInt32LE(16, 16);           // PCM header size
+  buffer.writeUInt16LE(1, 20);            // PCM format
+  buffer.writeUInt16LE(1, 22);            // mono
+  buffer.writeUInt32LE(sampleRate, 24);
+  buffer.writeUInt32LE(sampleRate * bytesPerSample, 28);
+  buffer.writeUInt16LE(bytesPerSample, 32);
+  buffer.writeUInt16LE(16, 34);           // bits per sample
+  buffer.write('data', 36);
+  buffer.writeUInt32LE(dataSize, 40);
+
+  for (let i = 0; i < samples.length; i++) {
+    const clamped = Math.max(-1, Math.min(1, samples[i]));
+    buffer.writeInt16LE(Math.round(clamped * 32767), 44 + i * bytesPerSample);
+  }
+
+  return buffer;
+}
+
+// -------------------------------------------------------------------- registry
+
+const providers = {
+  google: googleProvider,
+  elevenlabs: elevenLabsProvider,
+  mock: mockProvider,
+};
+
+const getProviderName = () => (process.env.TTS_PROVIDER || 'google').toLowerCase();
+
+const getProvider = () => {
+  const name = getProviderName();
+  const provider = providers[name];
+  if (!provider) {
+    throw new TTSError(
+      `Unknown TTS provider "${name}". Supported: ${Object.keys(providers).join(', ')}.`,
+      500,
+      name
+    );
+  }
+  return provider;
+};
+
+/**
+ * @param {string} text
+ * @param {string} providerVoiceId  e.g. "en-US-Neural2-A"
+ * @param {{ languageCode?: string, speed?: number, pitch?: number }} options
+ */
+const generateSpeech = async (text, providerVoiceId, options = {}) => {
+  const provider = getProvider();
+  return provider.textToSpeech(text, providerVoiceId, options);
+};
+
+const isConfigured = () => {
+  const name = getProviderName();
+  if (name === 'mock') return true;
+  if (name === 'google') return Boolean(process.env.GOOGLE_TTS_API_KEY);
+  if (name === 'elevenlabs') return Boolean(process.env.ELEVENLABS_API_KEY);
+  return false;
+};
+
+module.exports = { generateSpeech, getProviderName, isConfigured };

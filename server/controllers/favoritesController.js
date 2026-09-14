@@ -11,8 +11,12 @@ const getFavorites = async (req, res, next) => {
 
 const addFavorite = async (req, res, next) => {
   try {
-    const { speechGenerationId, voiceId } = req.body;
-    const favorite = await favoritesService.addFavorite(req.user.id, speechGenerationId, voiceId);
+    const { speechGenerationId, voiceId } = req.body || {};
+    const favorite = await favoritesService.addFavorite(
+      req.user.id,
+      speechGenerationId,
+      voiceId
+    );
     res.status(201).json({ status: 'success', favorite });
   } catch (err) {
     next(err);
@@ -22,10 +26,24 @@ const addFavorite = async (req, res, next) => {
 const removeFavorite = async (req, res, next) => {
   try {
     await favoritesService.removeFavorite(req.params.id, req.user.id);
-    res.status(204).json({ status: 'success', message: 'Favorite removed' });
+    res.status(200).json({ status: 'success', message: 'Favorite removed' });
   } catch (err) {
     next(err);
   }
 };
 
-module.exports = { getFavorites, addFavorite, removeFavorite };
+const checkFavorite = async (req, res, next) => {
+  try {
+    const { speechGenerationId, voiceId } = req.query;
+    const isFavorite = await favoritesService.checkFavorite(
+      req.user.id,
+      speechGenerationId,
+      voiceId
+    );
+    res.status(200).json({ status: 'success', isFavorite });
+  } catch (err) {
+    next(err);
+  }
+};
+
+module.exports = { getFavorites, addFavorite, removeFavorite, checkFavorite };
