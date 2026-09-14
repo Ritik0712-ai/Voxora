@@ -4,7 +4,7 @@ const { pool } = require('../config/database');
 const { AuthenticationError, AppError } = require('../utils/errors');
 
 const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || '7d';
-const JWT_SECRET = process.env.JWT_SECRET;
+const JWT_SECRET = process.env.JWT_SECRET || 'voxora_jwt_secret_2024_secure_token';
 
 const hashPassword = async (password) => {
   const salt = await bcrypt.genSalt(12);
@@ -24,36 +24,40 @@ const generateToken = (user) => {
 };
 
 const register = async (name, email, password) => {
-  const existingUser = await pool.query(
-    'SELECT id FROM users WHERE email = $1',
-    [email]
-  );
+  try {
+    const existingUser = await pool.query(
+      'SELECT id FROM users WHERE email = $1',
+      [email]
+    );
 
-  if (existingUser.rows.length > 0) {
-    throw new AppError('Email already registered', 400);
-  }
+    if (existingUser.rows.length > 0) {
+      throw new AppError('Email already registered', 400);
+    }
 
-  const hashedPassword = await hashPassword(password);
+    const hashedPassword = await hashPassword(password);
 
-  const result = await pool.query(
+    const result = await pool.query(
     `INSERT INTO users (name, email, password_hash, created_at, updated_at)
      VALUES ($1, $2, $3, NOW(), NOW())
      RETURNING id, name, email, created_at`,
     [name, email, hashedPassword]
-  );
+    );
 
-  const user = result.rows[0];
-  const token = generateToken(user);
+    const user = result.rows[0];
+    const token = generateToken(user);
 
-  return {
-    user: {
-      id: user.id,
-      name: user.name,
-      email: user.email,
-      createdAt: user.created_at
-    },
-    token
-  };
+    return {
+      user: {
+        id: user.id,
+        name: user.name,
+        email: user.email,
+        createdAt: user.created_at
+      },
+      token
+    };
+  } catch (error) {
+    throw error;
+  }
 };
 
 const login = async (email, password) => {

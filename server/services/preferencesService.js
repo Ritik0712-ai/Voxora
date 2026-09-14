@@ -1,42 +1,30 @@
 const { pool } = require('../config/database');
-const { AppError } = require('../utils/errors');
 
 const getPreferences = async (userId) => {
   const result = await pool.query(
-    `SELECT up.*, l.name as default_language_name, v.name as default_voice_name
-     FROM user_preferences up
-     LEFT JOIN languages l ON up.default_language_id = l.id
-     LEFT JOIN voices v ON up.default_voice_id = v.id
-     WHERE up.user_id = $1`,
+    'SELECT * FROM user_preferences WHERE user_id = $1',
     [userId]
   );
 
   if (result.rows.length === 0) {
     return {
-      userId,
       defaultLanguageId: null,
-      defaultLanguageName: null,
       defaultVoiceId: null,
-      defaultVoiceName: null,
       defaultSpeed: 1.0,
-      defaultPitch: 0
+      defaultPitch: 1.0,
     };
   }
 
-  const pref = result.rows[0];
+  const row = result.rows[0];
   return {
-    userId: pref.user_id,
-    defaultLanguageId: pref.default_language_id,
-    defaultLanguageName: pref.default_language_name,
-    defaultVoiceId: pref.default_voice_id,
-    defaultVoiceName: pref.default_voice_name,
-    defaultSpeed: pref.default_speed || 1.0,
-    defaultPitch: pref.default_pitch || 0
+    defaultLanguageId: row.default_language_id,
+    defaultVoiceId: row.default_voice_id,
+    defaultSpeed: parseFloat(row.default_speed) || 1.0,
+    defaultPitch: parseFloat(row.default_pitch) || 1.0,
   };
 };
 
 const updatePreferences = async (userId, defaultLanguageId, defaultVoiceId, defaultSpeed, defaultPitch) => {
-
   const result = await pool.query(
     `INSERT INTO user_preferences (user_id, default_language_id, default_voice_id, default_speed, default_pitch, created_at, updated_at)
      VALUES ($1, $2, $3, $4, $5, NOW(), NOW())
@@ -51,7 +39,13 @@ const updatePreferences = async (userId, defaultLanguageId, defaultVoiceId, defa
     [userId, defaultLanguageId, defaultVoiceId, defaultSpeed, defaultPitch]
   );
 
-  return getPreferences(userId);
+  const row = result.rows[0];
+  return {
+    defaultLanguageId: row.default_language_id,
+    defaultVoiceId: row.default_voice_id,
+    defaultSpeed: parseFloat(row.default_speed) || 1.0,
+    defaultPitch: parseFloat(row.default_pitch) || 1.0,
+  };
 };
 
 module.exports = { getPreferences, updatePreferences };

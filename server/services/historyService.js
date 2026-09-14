@@ -1,106 +1,110 @@
 const { pool } = require('../config/database');
-const { NotFoundError, AuthorizationError } = require('../utils/errors');
 
-const createHistory = async (userId, data) => {
-  const {
-    text, languageCode, voiceId, characterCount, wordCount,
-    audioUrl, audioFormat, status, errorCode
-  } = data;
-
+const createHistory = async (userId, text, languageCode, voiceId, characterCount, wordCount, audioUrl, audioFormat, status, errorCode = null) => {
   const result = await pool.query(
     `INSERT INTO speech_generations
-     (user_id, text_content, language_code, voice_id, character_count,
-      word_count, audio_url, audio_format, status, error_code, created_at)
+      (user_id, text_content, language_code, voice_id, character_count, word_count, audio_url, audio_format, status, error_code, created_at)
      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW())
      RETURNING *`,
-    [
-      userId, text, languageCode, voiceId, characterCount, wordCount,
-      audioUrl, audioFormat || 'mp3', status || 'completed', errorCode || null
-    ]
+    [userId, text, languageCode, voiceId, characterCount, wordCount, audioUrl, audioFormat, status, errorCode]
   );
 
-  return formatHistoryItem(result.rows[0]);
+  const row = result.rows[0];
+  return {
+    id: row.id,
+    userId: row.user_id,
+    textContent: row.text_content,
+    languageCode: row.language_code,
+    voiceId: row.voice_id,
+    characterCount: row.character_count,
+    wordCount: row.word_count,
+    audioUrl: row.audio_url,
+    audioFormat: row.audio_format,
+    status: row.status,
+    errorCode: row.error_code,
+    createdAt: row.created_at,
+  };
 };
 
-const getUserHistory = async (userId, limit = 50, offset = 0) => {
-  const result = await pool.query(
-    `SELECT sg.*, v.name as voice_name, v.gender as voice_gender, l.name as language_name
-     FROM speech_generations sg
-     LEFT JOIN voices v ON sg.voice_id = v.provider_voice_id
-     LEFT JOIN languages l ON sg.language_code = l.code
-     WHERE sg.user_id = $1
-     ORDER BY sg.created_at DESC
-     LIMIT $2 OFFSET $3`,
-    [userId, limit, offset]
-  );
+const getUserHistory = async (userId, page = 1, limit = 20) => {
+  const offset = (page - 1) * limit;
 
   const countResult = await pool.query(
     'SELECT COUNT(*) FROM speech_generations WHERE user_id = $1',
     [userId]
   );
+  const total = parseInt(countResult.rows[0].count, 10);
+
+  const result = await pool.query(
+    `SELECT id, user_id, text_content, language_code, voice_id,
+            character_count, word_count, audio_url, audio_format, status, error_code, created_at
+     FROM speech_generations
+     WHERE user_id = $1
+     ORDER BY created_at DESC
+     LIMIT $2 OFFSET $3`,
+    [userId, limit, offset]
+  );
+
+  const history = result.rows.map((row) => ({
+    id: row.id,
+    userId: row.user_id,
+    textContent: row.text_content,
+    languageCode: row.language_code,
+    voiceId: row.voice_id,
+    characterCount: row.character_count,
+    wordCount: row.word_count,
+    audioUrl: row.audio_url,
+    audioFormat: row.audio_format,
+    status: row.status,
+    errorCode: row.error_code,
+    createdAt: row.created_at,
+  }));
 
   return {
-    items: result.rows.map(formatHistoryItem),
-    total: parseInt(countResult.rows[0].count, 10),
-    limit,
-    offset
+    history,
+    pagination: {
+      page,
+      limit,
+      total,
+      totalPages: Math.ceil(total / limit),
+    },
   };
 };
 
-const getHistoryById = async (historyId, userId) => {
+const getHistoryById = async (id, userId) => {
   const result = await pool.query(
-    `SELECT sg.*, v.name as voice_name, v.gender as voice_gender, l.name as language_name
-     FROM speech_generations sg
-     LEFT JOIN voices v ON sg.voice_id = v.provider_voice_id
-     LEFT JOIN languages l ON sg.language_code = l.code
-     WHERE sg.id = $1`,
-    [historyId]
+    `SELECT id, user_id, text_content, language_code, voice_id,
+            character_count, word_count, audio_url, audio_format, status, error_code, created_at
+     FROM speech_generations
+     WHERE id = $1 AND user_id = $2`,
+    [id, userId]
   );
 
-  if (result.rows.length === 0) {
-    throw new NotFoundError('Speech generation not found');
-  }
+  if (result.rows.length === 0) return null;
 
-  const item = result.rows[0];
-
-  if (item.user_id !== userId) {
-    throw new AuthorizationError('Access denied');
-  }
-
-  return formatHistoryItem(item);
+  const row = result.rows[0];
+  return {
+    id: row.id,
+    userId: row.user_id,
+    textContent: row.text_content,
+    languageCode: row.language_code,
+    voiceId: row.voice_id,
+    characterCount: row.character_count,
+    wordCount: row.word_count,
+    audioUrl: row.audio_url,
+    audioFormat: row.audio_format,
+    status: row.status,
+    errorCode: row.error_code,
+    createdAt: row.created_at,
+  };
 };
 
-const deleteHistory = async (historyId, userId) => {
+const deleteHistory = async (id, userId) => {
   const result = await pool.query(
-    `DELETE FROM speech_generations
-     WHERE id = $1 AND user_id = $2
-     RETURNING id`,
-    [historyId, userId]
+    'DELETE FROM speech_generations WHERE id = $1 AND user_id = $2 RETURNING id',
+    [id, userId]
   );
-
-  if (result.rows.length === 0) {
-    throw new NotFoundError('Speech generation not found or access denied');
-  }
-
-  return { deleted: true };
+  return result.rows.length > 0;
 };
-
-const formatHistoryItem = (row) => ({
-  id: row.id,
-  text: row.text_content,
-  languageCode: row.language_code,
-  voiceId: row.voice_id,
-  voiceName: row.voice_name || null,
-  voiceGender: row.voice_gender || null,
-  languageName: row.language_name || null,
-  characterCount: row.character_count,
-  wordCount: row.word_count,
-  audioUrl: row.audio_url,
-  audioFormat: row.audio_format,
-  status: row.status,
-  errorCode: row.error_code,
-  createdAt: row.created_at,
-  completedAt: row.completed_at
-});
 
 module.exports = { createHistory, getUserHistory, getHistoryById, deleteHistory };
