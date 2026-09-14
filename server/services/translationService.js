@@ -27,39 +27,72 @@ const toTranslationCode = (locale) => {
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-// Two endpoints for the same service. The first is more heavily rate-limited
-// from shared IPs, so it is the fallback rather than the primary.
+// Several endpoints for the same underlying service. Rate limits are applied
+// per IP and per endpoint, so a datacenter IP that is throttled on one may
+// still be served by another. Ordered cheapest-first.
+const UA =
+  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 ' +
+  '(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
+
+// A 200 is not proof of a translation: some mirrors return an empty body with
+// a success code, so every parser must reject empty output.
 const ENDPOINTS = [
   {
-    name: 'clients5',
+    name: 'clients5-dict',
     url: (text, target) =>
       `https://clients5.google.com/translate_a/t?client=dict-chrome-ex` +
       `&sl=auto&tl=${encodeURIComponent(target)}&q=${encodeURIComponent(text)}`,
     parse: (body) => {
-      // Either ["translated"] or [["translated","detectedLang"]]
       if (Array.isArray(body) && Array.isArray(body[0])) {
         return { text: body[0][0], detected: body[0][1] || null };
       }
-      if (Array.isArray(body)) return { text: body[0], detected: null };
+      if (Array.isArray(body) && typeof body[0] === 'string') {
+        return { text: body[0], detected: null };
+      }
       return null;
     },
   },
   {
-    name: 'googleapis',
+    name: 'clients5-gtx',
+    url: (text, target) =>
+      `https://clients5.google.com/translate_a/single?client=gtx` +
+      `&sl=auto&tl=${encodeURIComponent(target)}&dt=t&q=${encodeURIComponent(text)}`,
+    parse: (body) => {
+      if (!Array.isArray(body) || !Array.isArray(body[0])) return null;
+      return {
+        text: body[0].map((seg) => seg[0]).join(''),
+        detected: body[2] || null,
+      };
+    },
+  },
+  {
+    name: 'googleapis-gtx',
     url: (text, target) =>
       `https://translate.googleapis.com/translate_a/single?client=gtx` +
       `&sl=auto&tl=${encodeURIComponent(target)}&dt=t&q=${encodeURIComponent(text)}`,
     parse: (body) => {
       if (!Array.isArray(body) || !Array.isArray(body[0])) return null;
       return {
-        text: body[0].map((segment) => segment[0]).join(''),
+        text: body[0].map((seg) => seg[0]).join(''),
         detected: body[2] || null,
       };
     },
   },
+  {
+    name: 'lingva',
+    url: (text, target) =>
+      `https://lingva.ml/api/v1/auto/${encodeURIComponent(target)}/${encodeURIComponent(text)}`,
+    parse: (body) =>
+      body && body.translation ? { text: body.translation, detected: null } : null,
+  },
 ];
 
 const MAX_ATTEMPTS = 3;
+
+// Rate limits usually clear within seconds, so back off meaningfully rather
+// than retrying three times inside half a second. Jittered so concurrent
+// requests do not retry in lockstep.
+const backoffMs = (attempt) => (1000 * Math.pow(2.5, attempt)) + Math.random() * 500;
 
 const callEndpoint = async (endpoint, text, target) => {
   const controller = new AbortController();
@@ -78,8 +111,9 @@ const callEndpoint = async (endpoint, text, target) => {
     }
 
     const parsed = endpoint.parse(await response.json());
-    if (!parsed || !parsed.text) {
-      throw new Error('unexpected response shape');
+    if (!parsed || !parsed.text || !parsed.text.trim()) {
+      // Some mirrors answer 200 with an empty translation.
+      throw new Error('empty or unrecognised response');
     }
     return parsed;
   } finally {
@@ -175,8 +209,7 @@ const translate = async (text, targetLocale) => {
         lastError = err;
       }
     }
-    // Back off before the next round; rate limits clear quickly.
-    if (attempt < MAX_ATTEMPTS - 1) await sleep(500 * (attempt + 1));
+    if (attempt < MAX_ATTEMPTS - 1) await sleep(backoffMs(attempt));
   }
 
   throw new AppError(
