@@ -1,13 +1,17 @@
 import api from '../api'
 
 export const voicesService = {
-  getVoices: async () => {
-    const response = await api.get('/voices')
-    return response.data
+  // Server responds { success, languages: [{ id, code, name }] }
+  getLanguages: async () => {
+    const { data } = await api.get('/voices/languages')
+    return data.languages || []
   },
 
-  getLanguages: async () => {
-    const response = await api.get('/voices/languages')
-    return response.data
+  // Server responds { success, voices: [{ id, providerVoiceId, name, gender, accent, style, language }] }
+  getVoices: async (languageCode) => {
+    const { data } = await api.get('/voices', {
+      params: languageCode ? { language: languageCode } : {},
+    })
+    return data.voices || []
   },
 }

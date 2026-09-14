@@ -1,7 +1,8 @@
 import { useState } from 'react'
-import { authService } from '../services'
+import { useAuth } from '../hooks/useAuth'
 
 export default function AuthModal({ mode: initialMode, onClose, onSuccess, onError }) {
+  const { login, register } = useAuth()
   const [mode, setMode] = useState(initialMode)
   const [loading, setLoading] = useState(false)
   const [form, setForm] = useState({
@@ -44,14 +45,11 @@ export default function AuthModal({ mode: initialMode, onClose, onSuccess, onErr
     setLoading(true)
     try {
       if (mode === 'login') {
-        await authService.login({ email: form.email, password: form.password })
+        // Goes through the auth context so the header and pages update immediately.
+        await login(form.email.trim(), form.password)
         onSuccess('Welcome back!')
       } else {
-        await authService.register({
-          name: form.name,
-          email: form.email,
-          password: form.password,
-        })
+        await register(form.name.trim(), form.email.trim(), form.password)
         onSuccess('Account created successfully!')
       }
     } catch (err) {
@@ -86,7 +84,7 @@ export default function AuthModal({ mode: initialMode, onClose, onSuccess, onErr
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
       <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={onClose} />
-      <div className="relative bg-white rounded-2xl shadow-2xl w-full max-w-md p-8 animate-fade-in">
+      <div className="relative bg-white rounded-2xl shadow-2xl w-full max-w-md p-8">
         <button
           onClick={onClose}
           className="absolute top-4 right-4 text-gray-400 hover:text-gray-600 transition-colors"
@@ -107,9 +105,9 @@ export default function AuthModal({ mode: initialMode, onClose, onSuccess, onErr
         </p>
 
         <form onSubmit={handleSubmit} className="space-y-4">
-          {mode === 'register' && field('name', 'Full Name', 'text', 'Ritik Agarwal')}
+          {mode === 'register' && field('name', 'Full Name', 'text', 'Your name')}
           {field('email', 'Email address', 'email', 'you@example.com')}
-          {field('password', 'Password', 'password', '••••••••')}
+          {field('password', 'Password', 'password', 'At least 8 characters')}
           {mode === 'register' && field('confirmPassword', 'Confirm Password', 'password', '••••••••')}
 
           <button

@@ -1,24 +1,23 @@
 import { useState, useCallback } from 'react'
+import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
+
 import Header from './components/Header'
+import Toast from './components/Toast'
+import AuthModal from './components/AuthModal'
+
 import TTSPage from './pages/TTSPage'
 import HistoryPage from './pages/HistoryPage'
 import FavoritesPage from './pages/FavoritesPage'
 import SettingsPage from './pages/SettingsPage'
-import AuthModal from './components/AuthModal'
-import Toast from './components/Toast'
-import { AuthProvider, useAuth } from './hooks/useAuth'
+
+import { AuthProvider } from './hooks/useAuth'
 
 function AppContent() {
-  const [currentPage, setCurrentPage] = useState('tts')
   const [toast, setToast] = useState(null)
   const [authModal, setAuthModal] = useState({ open: false, mode: 'login' })
 
   const showToast = useCallback((message, type = 'info') => {
     setToast({ message, type })
-  }, [])
-
-  const clearToast = useCallback(() => {
-    setToast(null)
   }, [])
 
   const openAuthModal = useCallback((mode = 'login') => {
@@ -29,31 +28,20 @@ function AppContent() {
     setAuthModal({ open: false, mode: 'login' })
   }, [])
 
-  const renderPage = () => {
-    switch (currentPage) {
-      case 'tts':
-        return <TTSPage showToast={showToast} openAuthModal={openAuthModal} />
-      case 'history':
-        return <HistoryPage showToast={showToast} openAuthModal={openAuthModal} />
-      case 'favorites':
-        return <FavoritesPage showToast={showToast} openAuthModal={openAuthModal} />
-      case 'settings':
-        return <SettingsPage showToast={showToast} />
-      default:
-        return <TTSPage showToast={showToast} openAuthModal={openAuthModal} />
-    }
-  }
-
   return (
     <div className="min-h-screen bg-gray-50">
-      <Header
-        currentPage={currentPage}
-        onNavigate={setCurrentPage}
-        onAuthClick={openAuthModal}
-      />
-      <main className="pt-16">
-        {renderPage()}
+      <Header onAuthClick={openAuthModal} />
+
+      <main className="pt-16 pb-16">
+        <Routes>
+          <Route path="/" element={<TTSPage showToast={showToast} openAuthModal={openAuthModal} />} />
+          <Route path="/history" element={<HistoryPage showToast={showToast} openAuthModal={openAuthModal} />} />
+          <Route path="/favorites" element={<FavoritesPage showToast={showToast} openAuthModal={openAuthModal} />} />
+          <Route path="/settings" element={<SettingsPage showToast={showToast} openAuthModal={openAuthModal} />} />
+          <Route path="*" element={<Navigate to="/" replace />} />
+        </Routes>
       </main>
+
       {authModal.open && (
         <AuthModal
           mode={authModal.mode}
@@ -65,11 +53,12 @@ function AppContent() {
           onError={(msg) => showToast(msg, 'error')}
         />
       )}
+
       {toast && (
         <Toast
           message={toast.message}
           type={toast.type}
-          onClose={clearToast}
+          onClose={() => setToast(null)}
         />
       )}
     </div>
@@ -78,8 +67,10 @@ function AppContent() {
 
 export default function App() {
   return (
-    <AuthProvider>
-      <AppContent />
-    </AuthProvider>
+    <BrowserRouter>
+      <AuthProvider>
+        <AppContent />
+      </AuthProvider>
+    </BrowserRouter>
   )
 }

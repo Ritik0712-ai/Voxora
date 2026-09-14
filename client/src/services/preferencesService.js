@@ -1,13 +1,14 @@
 import api from '../api'
 
 export const preferencesService = {
-  async getPreferences() {
-    const response = await api.get('/preferences')
-    return response.data.data
+  // Server responds { status, preferences: { defaultLanguageId, defaultVoiceId, defaultSpeed, defaultPitch } }
+  getPreferences: async () => {
+    const { data } = await api.get('/preferences')
+    return data.preferences
   },
 
-  async updatePreferences(data) {
-    const response = await api.put('/preferences', data)
-    return response.data.data
+  updatePreferences: async (payload) => {
+    const { data } = await api.put('/preferences', payload)
+    return data.preferences
   },
 }

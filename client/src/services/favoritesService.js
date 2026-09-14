@@ -1,25 +1,25 @@
 import api from '../api'
 
 export const favoritesService = {
-  async getFavorites() {
-    const response = await api.get('/favorites')
-    return response.data.data
+  // Server responds { status, favorites: [...] }
+  getFavorites: async () => {
+    const { data } = await api.get('/favorites')
+    return data.favorites || []
   },
 
-  async addFavorite(data) {
-    const response = await api.post('/favorites', data)
-    return response.data.data
+  addFavorite: async ({ speechGenerationId, voiceId }) => {
+    const { data } = await api.post('/favorites', { speechGenerationId, voiceId })
+    return data.favorite
   },
 
-  async removeFavorite(id) {
+  removeFavorite: async (id) => {
     await api.delete(`/favorites/${id}`)
   },
 
-  async checkFavorite(generationId, voiceId) {
-    const response = await api.get('/favorites')
-    const favorites = response.data.data || []
-    return favorites.some(
-      f => f.generation_id === generationId || f.voice_id === voiceId
-    )
+  checkFavorite: async ({ speechGenerationId, voiceId }) => {
+    const { data } = await api.get('/favorites/check', {
+      params: { speechGenerationId, voiceId },
+    })
+    return Boolean(data.isFavorite)
   },
 }

@@ -1,40 +1,81 @@
 import { useState, useEffect } from 'react'
-import { Link } from 'react-router-dom'
-import { preferencesService } from '../services'
+
+import { preferencesService, voicesService } from '../services'
 import { useAuth } from '../hooks/useAuth'
 import LanguageSelector from '../components/LanguageSelector'
 import VoiceSelector from '../components/VoiceSelector'
+import ErrorMessage from '../components/ErrorMessage'
 
-export default function SettingsPage() {
-  const { user } = useAuth()
+export default function SettingsPage({ showToast, openAuthModal }) {
+  const { user, loading: authLoading } = useAuth()
+
+  const [languages, setLanguages] = useState([])
+  const [voices, setVoices] = useState([])
+  const [languageCode, setLanguageCode] = useState('')
+  const [voiceId, setVoiceId] = useState('')
+
   const [loading, setLoading] = useState(true)
+  const [voicesLoading, setVoicesLoading] = useState(false)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState(null)
-  const [success, setSuccess] = useState(false)
-  const [selectedLanguage, setSelectedLanguage] = useState('')
-  const [selectedVoice, setSelectedVoice] = useState('')
 
+  // Preferences are stored as UUIDs; the selectors work in language codes,
+  // so load the language list first and translate between the two.
   useEffect(() => {
+    if (authLoading) return
     if (!user) {
       setLoading(false)
       return
     }
-    loadPreferences()
-  }, [user])
 
-  const loadPreferences = async () => {
-    try {
-      setLoading(true)
-      setError(null)
-      const prefs = await preferencesService.getPreferences()
-      if (prefs) {
-        setSelectedLanguage(prefs.defaultLanguageId || '')
-        setSelectedVoice(prefs.defaultVoiceId || '')
+    let cancelled = false
+
+    const load = async () => {
+      try {
+        const langs = await voicesService.getLanguages()
+        if (cancelled) return
+        setLanguages(langs)
+
+        const prefs = await preferencesService.getPreferences()
+        if (cancelled) return
+
+        if (prefs?.defaultLanguageId) {
+          const match = langs.find((l) => l.id === prefs.defaultLanguageId)
+          if (match) {
+            setLanguageCode(match.code)
+            const voiceList = await voicesService.getVoices(match.code)
+            if (cancelled) return
+            setVoices(voiceList)
+            if (prefs.defaultVoiceId) setVoiceId(prefs.defaultVoiceId)
+          }
+        }
+      } catch (err) {
+        if (!cancelled) setError(err.message || 'Failed to load settings.')
+      } finally {
+        if (!cancelled) setLoading(false)
       }
+    }
+
+    load()
+    return () => {
+      cancelled = true
+    }
+  }, [user, authLoading])
+
+  const handleLanguageChange = async (code) => {
+    setLanguageCode(code)
+    setVoiceId('')
+    if (!code) {
+      setVoices([])
+      return
+    }
+    setVoicesLoading(true)
+    try {
+      setVoices(await voicesService.getVoices(code))
     } catch (err) {
-      setError(err.message || 'Failed to load preferences')
+      setError(err.message || 'Failed to load voices.')
     } finally {
-      setLoading(false)
+      setVoicesLoading(false)
     }
   }
 
@@ -42,35 +83,43 @@ export default function SettingsPage() {
     e.preventDefault()
     setSaving(true)
     setError(null)
-    setSuccess(false)
     try {
+      const selectedLanguage = languages.find((l) => l.code === languageCode)
       await preferencesService.updatePreferences({
-        defaultLanguageId: selectedLanguage || null,
-        defaultVoiceId: selectedVoice || null,
+        defaultLanguageId: selectedLanguage ? selectedLanguage.id : null,
+        defaultVoiceId: voiceId || null,
+        defaultSpeed: 1.0,
+        defaultPitch: 0,
       })
-      setSuccess(true)
-      setTimeout(() => setSuccess(false), 3000)
+      showToast?.('Preferences saved', 'success')
     } catch (err) {
-      setError(err.message || 'Failed to save preferences')
+      setError(err.message || 'Failed to save preferences.')
     } finally {
       setSaving(false)
     }
   }
 
+  const voiceOptions = voices.map((v) => ({
+    voiceId: v.id,
+    name: v.name,
+    gender: v.gender,
+    accent: v.accent,
+    style: v.style,
+  }))
+
+  if (authLoading) return null
+
   if (!user) {
     return (
       <div className="max-w-3xl mx-auto px-4 py-16 text-center">
-        <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-indigo-50 flex items-center justify-center">
-          <svg className="w-8 h-8 text-indigo-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-            <path strokeLinecap="round" strokeLinejoin="round" d="M9.594 3.94c.09-.542.56-.94 1.11-.94h2.593c.55 0 1.02.398 1.11.94l.213 1.281c.063.374.313.686.645.87.074.04.147.083.22.127.324.196.72.257 1.075.124l1.217-.456a1.125 1.125 0 011.37.49l1.296 2.247a1.125 1.125 0 01-.26 1.431l-1.003.827c-.293.24-.438.613-.431.992a6.759 6.759 0 010 .255c-.007.378.138.75.43.99l1.005.828c.424.35.534.954.26 1.43l-1.298 2.247a1.125 1.125 0 01-1.369.491l-1.217-.456c-.355-.133-.75-.072-1.076.124a6.57 6.57 0 01-.22.128c-.331.183-.581.495-.644.869l-.213 1.28c-.09.543-.56.941-1.11.941h-2.594c-.55 0-1.02-.398-1.11-.94l-.213-1.281c-.062-.374-.312-.686-.644-.87a6.52 6.52 0 01-.22-.127c-.325-.196-.72-.257-1.076-.124l-1.217.456a1.125 1.125 0 01-1.369-.49l-1.297-2.247a1.125 1.125 0 01.26-1.431l1.004-.827c.292-.24.437-.613.43-.992a6.932 6.932 0 010-.255c.007-.378-.138-.75-.43-.99l-1.004-.828a1.125 1.125 0 01-.26-1.43l1.297-2.247a1.125 1.125 0 011.37-.491l1.216.456c.356.133.751.072 1.076-.124.072-.044.146-.086.22-.128.332-.183.582-.495.644-.869l.214-1.281z" />
-            <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-          </svg>
-        </div>
         <h1 className="text-2xl font-bold text-gray-900 mb-2">Settings</h1>
         <p className="text-sm text-gray-500 mb-6">Configure your default preferences.</p>
-        <p className="text-sm text-gray-400">
-          <Link to="/" className="text-indigo-600 hover:text-indigo-700 font-medium">Sign in</Link> to access settings.
-        </p>
+        <button
+          onClick={() => openAuthModal?.('login')}
+          className="px-4 py-2 bg-indigo-600 text-white text-sm font-medium rounded-lg hover:bg-indigo-700 transition-colors"
+        >
+          Sign in to access settings
+        </button>
       </div>
     )
   }
@@ -78,13 +127,7 @@ export default function SettingsPage() {
   if (loading) {
     return (
       <div className="max-w-3xl mx-auto px-4 py-16 flex justify-center">
-        <div className="flex items-center gap-3 text-gray-500">
-          <svg className="animate-spin w-5 h-5" fill="none" viewBox="0 0 24 24">
-            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-          </svg>
-          <span className="text-sm">Loading settings...</span>
-        </div>
+        <div className="w-8 h-8 border-4 border-indigo-600 border-t-transparent rounded-full animate-spin" />
       </div>
     )
   }
@@ -97,50 +140,49 @@ export default function SettingsPage() {
       </div>
 
       <form onSubmit={handleSave} className="bg-white border border-gray-200 rounded-xl p-6 space-y-6">
-        <div>
-          <h2 className="text-base font-semibold text-gray-900 mb-4">Default Preferences</h2>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Default Language</label>
-              <LanguageSelector
-                value={selectedLanguage}
-                onChange={(val) => {
-                  setSelectedLanguage(val)
-                  if (val !== selectedLanguage) setSelectedVoice('')
-                }}
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Default Voice</label>
-              <VoiceSelector
-                language={selectedLanguage}
-                value={selectedVoice}
-                onChange={setSelectedVoice}
-              />
-            </div>
-          </div>
-          <p className="text-xs text-gray-400 mt-2">
-            These defaults will be pre-selected when you generate new speech.
-          </p>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <LanguageSelector
+            value={languageCode}
+            onChange={handleLanguageChange}
+            options={languages}
+          />
+          <VoiceSelector
+            value={voiceId}
+            onChange={setVoiceId}
+            options={voiceOptions}
+            disabled={!languageCode}
+            loading={voicesLoading}
+          />
         </div>
 
-        {error && (
-          <p className="text-sm text-red-500">{error}</p>
-        )}
+        <p className="text-xs text-gray-400">
+          These defaults are pre-selected when you generate new speech.
+        </p>
 
-        <div className="flex items-center gap-3">
-          <button
-            type="submit"
-            disabled={saving}
-            className="px-4 py-2 bg-indigo-600 text-white text-sm font-medium rounded-lg hover:bg-indigo-700 disabled:opacity-50 transition-colors"
-          >
-            {saving ? 'Saving...' : 'Save preferences'}
-          </button>
-          {success && (
-            <span className="text-sm text-green-600 font-medium">Saved!</span>
-          )}
-        </div>
+        {error && <ErrorMessage message={error} onDismiss={() => setError(null)} />}
+
+        <button
+          type="submit"
+          disabled={saving}
+          className="px-4 py-2 bg-indigo-600 text-white text-sm font-medium rounded-lg hover:bg-indigo-700 disabled:opacity-50 transition-colors"
+        >
+          {saving ? 'Saving...' : 'Save preferences'}
+        </button>
       </form>
+
+      <div className="mt-6 bg-white border border-gray-200 rounded-xl p-6">
+        <h2 className="text-base font-semibold text-gray-900 mb-3">Account</h2>
+        <dl className="text-sm space-y-2">
+          <div className="flex justify-between">
+            <dt className="text-gray-500">Name</dt>
+            <dd className="text-gray-900">{user.name || '—'}</dd>
+          </div>
+          <div className="flex justify-between">
+            <dt className="text-gray-500">Email</dt>
+            <dd className="text-gray-900">{user.email}</dd>
+          </div>
+        </dl>
+      </div>
     </div>
   )
 }
