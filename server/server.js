@@ -29,9 +29,30 @@ app.use(helmet({
   crossOriginResourcePolicy: { policy: 'cross-origin' }
 }));
 
-// CORS configuration
+// CORS configuration.
+// FRONTEND_URL takes a comma-separated list so preview deployments are not
+// locked out by a single hardcoded origin.
+const allowedOrigins = (process.env.FRONTEND_URL || 'http://localhost:5173,http://localhost:4173')
+  .split(',')
+  .map((origin) => origin.trim().replace(/\/$/, ''))
+  .filter(Boolean);
+
+// Vercel gives every preview build its own subdomain, so allow them by pattern.
+const previewOrigin = /^https:\/\/[a-z0-9-]+\.vercel\.app$/i;
+
 app.use(cors({
-  origin: process.env.FRONTEND_URL || 'http://localhost:5173',
+  origin(origin, callback) {
+    // Same-origin, curl and server-to-server requests send no Origin header.
+    if (!origin) return callback(null, true);
+
+    const normalized = origin.replace(/\/$/, '');
+    if (allowedOrigins.includes(normalized)) return callback(null, true);
+    if (process.env.ALLOW_VERCEL_PREVIEWS === 'true' && previewOrigin.test(normalized)) {
+      return callback(null, true);
+    }
+
+    return callback(new Error(`Origin ${origin} is not allowed by CORS`));
+  },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization']
@@ -43,7 +64,7 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
 // Logging
 if (process.env.NODE_ENV !== 'test') {
-  app.use(morgan('dev'));
+  app.use(morgan(process.env.NODE_ENV === 'production' ? 'combined' : 'dev'));
 }
 
 // Serve static audio files
@@ -90,6 +111,24 @@ process.on('SIGTERM', () => {
 });
 
 if (require.main === module) {
+  if (process.env.NODE_ENV === 'production') {
+    const storageService = require('./services/storageService');
+    if (storageService.describe().ephemeral) {
+      console.warn(
+        '\nWARNING: no object storage configured. Audio is being written to this\n' +
+        'instance\'s disk, which is wiped on every restart and redeploy, so\n' +
+        'History playback will break. Set S3_BUCKET, S3_ACCESS_KEY_ID,\n' +
+        'S3_SECRET_ACCESS_KEY, R2_ACCOUNT_ID and S3_PUBLIC_URL.\n'
+      );
+    }
+    if (!process.env.FRONTEND_URL) {
+      console.warn(
+        'WARNING: FRONTEND_URL is unset, so CORS only allows localhost.\n' +
+        'Your deployed frontend will be blocked.\n'
+      );
+    }
+  }
+
   const server = app.listen(PORT, () => {
     console.log(`Voxora server running on http://localhost:${PORT}`);
     console.log(`Environment:  ${process.env.NODE_ENV || 'development'}`);

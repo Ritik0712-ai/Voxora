@@ -1,3 +1,6 @@
+const crypto = require('crypto');
+
+const { pool } = require('../config/database');
 const { AppError } = require('../utils/errors');
 
 /**
@@ -84,16 +87,62 @@ const callEndpoint = async (endpoint, text, target) => {
   }
 };
 
+const cacheKey = (text, target) =>
+  crypto.createHash('sha256').update(`${target}\u0000${text}`).digest('hex');
+
+const readCache = async (text, target) => {
+  try {
+    const result = await pool.query(
+      `UPDATE translation_cache
+          SET hit_count = hit_count + 1, last_used_at = NOW()
+        WHERE cache_key = $1
+        RETURNING translated_text, detected_language`,
+      [cacheKey(text, target)]
+    );
+    return result.rows[0] || null;
+  } catch (err) {
+    // A cache miss must never break translation.
+    console.error('Translation cache read failed:', err.message);
+    return null;
+  }
+};
+
+const writeCache = async (text, target, translated, detected) => {
+  try {
+    await pool.query(
+      `INSERT INTO translation_cache
+         (cache_key, source_text, target_language, translated_text, detected_language, hit_count)
+       VALUES ($1, $2, $3, $4, $5, 0)
+       ON CONFLICT (cache_key) DO NOTHING`,
+      [cacheKey(text, target), text, target, translated, detected]
+    );
+  } catch (err) {
+    console.error('Translation cache write failed:', err.message);
+  }
+};
+
 /**
  * @param {string} text
  * @param {string} targetLocale  e.g. "bn-IN"
- * @returns {{ text, detectedLanguage, translated: boolean, skippedReason?: string }}
+ * @returns {{ text, detectedLanguage, translated: boolean, cached?: boolean, skippedReason?: string }}
  */
 const translate = async (text, targetLocale) => {
   const target = toTranslationCode(targetLocale);
 
   if (!target) {
     return { text, detectedLanguage: null, translated: false, skippedReason: 'no target language' };
+  }
+
+  const cached = await readCache(text, target);
+  if (cached) {
+    const unchanged = cached.translated_text.trim() === text.trim();
+    return {
+      text: cached.translated_text,
+      detectedLanguage: cached.detected_language,
+      translated: !unchanged,
+      cached: true,
+      skippedReason: unchanged ? 'text is already in the target language' : undefined,
+    };
   }
 
   let lastError = null;
@@ -108,10 +157,13 @@ const translate = async (text, targetLocale) => {
         const detected = (result.detected || '').toLowerCase();
         const unchanged = result.text.trim() === text.trim();
 
+        await writeCache(text, target, result.text, result.detected || null);
+
         return {
           text: result.text,
           detectedLanguage: result.detected || null,
           translated: !unchanged,
+          cached: false,
           skippedReason: unchanged
             ? detected === target
               ? 'text is already in the target language'

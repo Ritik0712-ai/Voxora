@@ -1,17 +1,10 @@
-const fs = require('fs');
-const path = require('path');
-const crypto = require('crypto');
-
 const ttsService = require('../services/ttsService');
 const translationService = require('../services/translationService');
+const storageService = require('../services/storageService');
 const { pool } = require('../config/database');
 const { ValidationError } = require('../utils/errors');
 
 const MAX_TEXT_LENGTH = 5000;
-const AUDIO_DIR = path.join(__dirname, '..', 'audio');
-
-// Make sure the audio directory exists at boot.
-fs.mkdirSync(AUDIO_DIR, { recursive: true });
 
 /**
  * Resolve the client's voice selection to a DB row.
@@ -107,11 +100,9 @@ const generateSpeech = async (req, res, next) => {
     );
 
     // Persist the audio so it can be replayed from History and downloaded.
-    const filename = `${crypto.randomUUID()}.${result.format}`;
-    await fs.promises.writeFile(path.join(AUDIO_DIR, filename), result.audio);
-
-    const relativeUrl = `/audio/${filename}`;
-    const absoluteUrl = `${req.protocol}://${req.get('host')}${relativeUrl}`;
+    // Goes to object storage when configured, local disk otherwise.
+    const stored = await storageService.saveAudio(result.audio, result.format);
+    const absoluteUrl = storageService.toAbsoluteUrl(stored.url, req);
 
     let generationId = null;
 
@@ -134,7 +125,7 @@ const generateSpeech = async (req, res, next) => {
             translation.translated,
             characterCount,
             wordCount,
-            relativeUrl,
+            stored.url,
             result.format,
           ]
         );

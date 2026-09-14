@@ -11,8 +11,9 @@ node_modules/
 dist/
 build/
 
-# Audio files (temporary/generated)
-server/audio/
+# Locally generated audio. In production this goes to object storage instead.
+server/audio/*
+!server/audio/.gitkeep
 
 # Logs
 *.log
@@ -28,5 +29,6 @@ Thumbs.db
 *.swp
 *.swo
 
-# Package locks (keep package.json)
-package-lock.json
+# Lockfiles ARE committed. Deploy platforms run `npm ci`, which fails without
+# one, and falling back to `npm install` resolves versions that were never
+# tested. Do not ignore these.

@@ -159,11 +159,18 @@ Neon Postgres. Tables: `users`, `languages`, `voices`, `speech_generations`,
 `favorites`, `user_preferences`. `speech_generations` references languages and
 voices by UUID foreign key — not by code or name.
 
-## Notes for deployment
+## Storage
 
-- `server/audio/` is local disk. On an ephemeral host (Render, Railway, Vercel)
-  generated files disappear on restart. Move to S3/R2/Cloudinary before going live,
-  or accept that history playback only works for the current instance's lifetime.
-- Set `FRONTEND_URL` to the deployed frontend origin so CORS allows it.
-- Set `NODE_ENV=production` so stack traces stop leaking in error responses.
-- Use a long random `JWT_SECRET` in production, not the dev value.
+Audio is written to local disk by default, which is fine for development. On
+hosts with ephemeral filesystems (Render, Railway) that disk is wiped on every
+restart and redeploy, so set the S3-compatible variables and audio goes to
+object storage instead. Cloudflare R2 is free to 10GB with no egress fees.
+
+`GET /api/health` reports `storage.ephemeral`, which is the quickest way to
+tell whether audio will survive a restart.
+
+## Deployment
+
+See [DEPLOYMENT.md](./DEPLOYMENT.md) for the full walkthrough: Vercel for the
+frontend, Render for the API, R2 for audio, plus known limits and a
+troubleshooting table.

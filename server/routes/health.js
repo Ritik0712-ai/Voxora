@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const { pool } = require('../config/database');
 const ttsService = require('../services/ttsService');
+const storageService = require('../services/storageService');
 
 router.get('/', async (req, res) => {
   const health = {
@@ -10,6 +11,7 @@ router.get('/', async (req, res) => {
     database: 'unknown',
     ttsProvider: ttsService.getProviderName(),
     ttsConfigured: ttsService.isConfigured(),
+    storage: storageService.describe(),
   };
 
   try {

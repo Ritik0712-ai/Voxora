@@ -1,8 +1,19 @@
 const favoritesService = require('../services/favoritesService');
+const storageService = require('../services/storageService');
 
 const getFavorites = async (req, res, next) => {
   try {
-    const favorites = await favoritesService.getUserFavorites(req.user.id);
+    const favorites = (await favoritesService.getUserFavorites(req.user.id)).map((fav) =>
+      fav.speechGeneration
+        ? {
+            ...fav,
+            speechGeneration: {
+              ...fav.speechGeneration,
+              audioUrl: storageService.toAbsoluteUrl(fav.speechGeneration.audioUrl, req),
+            },
+          }
+        : fav
+    );
     res.status(200).json({ status: 'success', favorites });
   } catch (err) {
     next(err);
