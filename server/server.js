@@ -74,7 +74,10 @@ app.use('/api/preferences', preferencesRoutes);
 
 // 404 handler
 app.use((req, res) => {
-  res.status(404).json({ error: 'Route not found' });
+  res.status(404).json({
+    error: `Route not found: ${req.method} ${req.originalUrl}`,
+    hint: 'If this looks like a route that should exist, an older server process may still be holding this port. Check with: lsof -ti:5000',
+  });
 });
 
 // Error handler
@@ -87,9 +90,25 @@ process.on('SIGTERM', () => {
 });
 
 if (require.main === module) {
-  app.listen(PORT, () => {
-    console.log(`Voxora server running on port ${PORT}`);
-    console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
+  const server = app.listen(PORT, () => {
+    console.log(`Voxora server running on http://localhost:${PORT}`);
+    console.log(`Environment:  ${process.env.NODE_ENV || 'development'}`);
+    console.log(`TTS provider: ${require('./services/ttsService').getProviderName()}`);
+  });
+
+  server.on('error', (err) => {
+    if (err.code === 'EADDRINUSE') {
+      console.error(
+        `\nPort ${PORT} is already in use, so this server did NOT start.\n` +
+        `Something older is answering on it, which is why routes look missing.\n\n` +
+        `  Free it:  lsof -ti:${PORT} | xargs kill -9\n` +
+        `  Or pick another port:  PORT=5001 npm run dev\n\n` +
+        `On macOS, port 5000 is also used by AirPlay Receiver\n` +
+        `(System Settings > General > AirDrop & Handoff).\n`
+      );
+      process.exit(1);
+    }
+    throw err;
   });
 }
 

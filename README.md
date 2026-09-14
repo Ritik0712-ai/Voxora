@@ -32,6 +32,23 @@ npm run dev
 
 `npm run dev:server` and `npm run dev:client` run them separately.
 
+### If routes 404 that should exist
+
+Almost always a stale server still holding port 5000, so `npm run dev` never
+actually bound and the browser is talking to something older:
+
+```bash
+lsof -ti:5000 | xargs kill -9
+npm run dev
+```
+
+On macOS, port 5000 is also claimed by AirPlay Receiver
+(System Settings → General → AirDrop & Handoff). Either turn it off or run on
+another port with `PORT=5001 npm run dev` and point `client/.env` at it.
+
+A healthy start prints the port, environment and active TTS provider. A port
+clash now fails loudly instead of dying quietly behind `concurrently`.
+
 ## TTS providers
 
 Set `TTS_PROVIDER` in `server/.env`:
